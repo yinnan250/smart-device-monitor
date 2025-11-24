@@ -1,6 +1,193 @@
-// 修改后的MonitoringAPI类 - 使用Flask后端API
+// 监控大屏应用主逻辑
+class MonitoringDashboard {
+    constructor() {
+        this.refreshInterval = 5000; // 5秒刷新间隔
+        this.init();
+    }
+
+    async init() {
+        console.log('初始化监控大屏...');
+        await this.loadMonitoringData();
+        this.startAutoRefresh();
+    }
+
+    // 加载监控数据
+    async loadMonitoringData() {
+        try {
+            const response = await fetch('/api/monitoring/data');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log('监控数据加载成功:', data);
+            
+            this.updateDashboard(data);
+            this.updateLastRefreshTime();
+            
+        } catch (error) {
+            console.error('加载监控数据失败:', error);
+            this.showError('加载监控数据失败: ' + error.message);
+        }
+    }
+
+    // 更新仪表板显示
+    updateDashboard(data) {
+        const container = document.getElementById('hostsContainer');
+        
+        if (!data || data.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <h3>暂无监控数据</h3>
+                    <p>请先添加监控主机</p>
+                </div>
+            `;
+            return;
+        }
+
+        // 过滤在线主机
+        const onlineHosts = data.filter(host => host.status === 'online');
+        
+        if (onlineHosts.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <h3>无在线主机</h3>
+                    <p>所有监控主机均处于离线状态</p>
+                </div>
+            `;
+            return;
+        }
+
+        // 生成主机卡片HTML
+        container.innerHTML = onlineHosts.map(host => this.createHostCard(host)).join('');
+    }
+
+    // 创建主机监控卡片
+    createHostCard(host) {
+        const metrics = host.metrics;
+        const isRealData = host.realData;
+        
+        return `
+            <div class="host-card" data-host-id="${host.hostId}">
+                <div class="host-header">
+                    <div class="host-ip">${host.hostIp}</div>
+                    <div class="host-status status-online">
+                        ${isRealData ? '🟢 实时数据' : '🟡 模拟数据'} • 在线
+                    </div>
+                </div>
+                
+                <div class="metrics-grid">
+                    <!-- CPU 使用率 -->
+                    <div class="metric-item">
+                        <div class="metric-label">CPU 使用率</div>
+                        <div class="metric-value">${metrics.cpu.usage}%</div>
+                        <div class="metric-bar">
+                            <div class="metric-progress ${this.getUsageClass(metrics.cpu.usage)}" 
+                                 style="width: ${metrics.cpu.usage}%"></div>
+                        </div>
+                        <div class="metric-info">温度: ${metrics.cpu.temperature}°C</div>
+                    </div>
+                    
+                    <!-- 内存使用率 -->
+                    <div class="metric-item">
+                        <div class="metric-label">内存使用率</div>
+                        <div class="metric-value">${metrics.memory.usage}%</div>
+                        <div class="metric-bar">
+                            <div class="metric-progress ${this.getUsageClass(metrics.memory.usage)}" 
+                                 style="width: ${metrics.memory.usage}%"></div>
+                        </div>
+                        <div class="metric-info">
+                            已用: ${this.formatBytes(metrics.memory.used)} / 
+                            总计: ${this.formatBytes(metrics.memory.total)}
+                        </div>
+                    </div>
+                    
+                    <!-- 磁盘使用率 -->
+                    <div class="metric-item">
+                        <div class="metric-label">磁盘使用率</div>
+                        <div class="metric-value">${metrics.disk.usage}%</div>
+                        <div class="metric-bar">
+                            <div class="metric-progress ${this.getUsageClass(metrics.disk.usage)}" 
+                                 style="width: ${metrics.disk.usage}%"></div>
+                        </div>
+                        <div class="metric-info">
+                            总计: ${metrics.disk.total}GB
+                        </div>
+                    </div>
+                    
+                    <!-- 网络流量 -->
+                    <div class="metric-item">
+                        <div class="metric-label">网络流量</div>
+                        <div class="metric-value">↑${metrics.network.out} ↓${metrics.network.in}</div>
+                        <div class="metric-info">
+                            上传: ${metrics.network.out} MB/s<br>
+                            下载: ${metrics.network.in} MB/s
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="host-footer">
+                    <span class="timestamp">最后更新: ${new Date(host.timestamp).toLocaleString()}</span>
+                    <span class="data-source">${isRealData ? '真实数据' : '模拟数据'}</span>
+                </div>
+            </div>
+        `;
+    }
+
+    // 根据使用率返回对应的CSS类
+    getUsageClass(usage) {
+        if (usage < 50) return 'progress-low';
+        if (usage < 80) return 'progress-medium';
+        return 'progress-high';
+    }
+
+    // 格式化字节大小
+    formatBytes(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    // 更新最后刷新时间
+    updateLastRefreshTime() {
+        const timeElement = document.getElementById('lastUpdateTime');
+        if (timeElement) {
+            timeElement.textContent = `最后更新: ${new Date().toLocaleString()}`;
+        }
+    }
+
+    // 显示错误信息
+    showError(message) {
+        const container = document.getElementById('hostsContainer');
+        container.innerHTML = `
+            <div class="error">
+                <h3>数据加载失败</h3>
+                <p>${message}</p>
+                <button onclick="dashboard.loadMonitoringData()" class="btn-primary">重试</button>
+            </div>
+        `;
+    }
+
+    // 开始自动刷新
+    startAutoRefresh() {
+        setInterval(() => {
+            this.loadMonitoringData();
+        }, this.refreshInterval);
+    }
+
+    // 手动刷新数据
+    refreshData() {
+        this.loadMonitoringData();
+    }
+}
+
+// API 调用类
 class MonitoringAPI {
-    static BASE_URL = '/api'; // 使用相对路径指向Flask后端
+    static BASE_URL = '/api';
     
     // 获取所有主机
     static async getHosts() {
@@ -57,9 +244,24 @@ class MonitoringAPI {
             throw error;
         }
     }
+    
+    // 测试SSH连接
+    static async testSshConnection(hostData) {
+        try {
+            const response = await fetch(`${this.BASE_URL}/test-ssh`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(hostData)
+            });
+            return await response.json();
+        } catch (error) {
+            console.error('SSH连接测试失败:', error);
+            return { success: false, message: '网络错误: ' + error.message };
+        }
+    }
 }
 
-// 主机管理功能类保持不变（与文档1相同）
+// 主机管理类
 class HostManager {
     constructor() {
         this.init();
@@ -75,6 +277,39 @@ class HostManager {
     setupHostForm() {
         const form = document.getElementById('addHostForm');
         form.addEventListener('submit', (e) => this.handleAddHost(e));
+        
+        document.getElementById('testSshBtn').addEventListener('click', () => this.testSshConnection());
+    }
+    
+    async testSshConnection() {
+        const form = document.getElementById('addHostForm');
+        const formData = new FormData(form);
+        const hostData = {
+            hostIp: formData.get('hostIp'),
+            sshUser: formData.get('sshUser'),
+            sshPassword: formData.get('sshPassword'),
+            sshPort: formData.get('sshPort') || '22'
+        };
+        
+        if (!this.isValidIp(hostData.hostIp)) {
+            alert('请输入有效的IP地址');
+            return;
+        }
+        
+        const resultDiv = document.getElementById('sshTestResult');
+        resultDiv.innerHTML = '<div class="testing">正在测试SSH连接...</div>';
+        
+        try {
+            const result = await MonitoringAPI.testSshConnection(hostData);
+            
+            if (result.success) {
+                resultDiv.innerHTML = '<div class="success">✅ SSH连接测试成功！</div>';
+            } else {
+                resultDiv.innerHTML = `<div class="error">❌ SSH连接测试失败: ${result.message}</div>`;
+            }
+        } catch (error) {
+            resultDiv.innerHTML = `<div class="error">❌ 测试过程中发生错误: ${error.message}</div>`;
+        }
     }
     
     async handleAddHost(event) {
@@ -88,7 +323,6 @@ class HostManager {
             sshPort: formData.get('sshPort') || '22'
         };
         
-        // 验证IP地址
         if (!this.isValidIp(hostData.hostIp)) {
             alert('请输入有效的IP地址');
             return;
@@ -97,6 +331,7 @@ class HostManager {
         try {
             await MonitoringAPI.addHost(hostData);
             event.target.reset();
+            document.getElementById('sshTestResult').innerHTML = '';
             await this.loadHostsList();
             alert('主机添加成功！');
         } catch (error) {
@@ -153,220 +388,22 @@ class HostManager {
     }
 }
 
-// 监控仪表板功能类保持不变（与文档1相同）
-class MonitoringDashboard {
-    constructor() {
-        this.charts = new Map();
-        this.refreshInterval = null;
-        this.refreshRate = 5000; // 5秒刷新一次
-        
-        if (document.getElementById('hostsContainer')) {
-            this.init();
-        }
-    }
-    
-    async init() {
-        await this.loadMonitoringData();
-        this.startAutoRefresh();
-        
-        // 页面可见性变化时控制刷新
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                this.stopAutoRefresh();
-            } else {
-                this.startAutoRefresh();
-            }
-        });
-    }
-    
-    async loadMonitoringData() {
-        try {
-            const monitoringData = await MonitoringAPI.getMonitoringData();
-            this.renderMonitoringData(monitoringData);
-            this.updateLastUpdateTime();
-        } catch (error) {
-            console.error('加载监控数据失败:', error);
-            document.getElementById('hostsContainer').innerHTML = 
-                '<div class="error">加载监控数据失败，请检查网络连接</div>';
-        }
-    }
-    
-    renderMonitoringData(data) {
-        const container = document.getElementById('hostsContainer');
-        
-        if (!data || data.length === 0) {
-            container.innerHTML = '<div class="empty-state">暂无监控数据，请先添加监控主机</div>';
-            return;
-        }
-        
-        container.innerHTML = data.map(hostData => this.createHostCard(hostData)).join('');
-        
-        // 初始化或更新图表
-        data.forEach(hostData => {
-            this.updateCharts(hostData);
-        });
-    }
-    
-    createHostCard(hostData) {
-        const metrics = hostData.metrics;
-        const statusClass = hostData.status === 'online' ? 'status-online' : 'status-offline';
-        const statusText = hostData.status === 'online' ? '在线' : '离线';
-        
-        // 计算进度条样式
-        const cpuProgressClass = this.getProgressClass(metrics.cpu.usage);
-        const memoryProgressClass = this.getProgressClass(metrics.memory.usage);
-        const diskProgressClass = this.getProgressClass(metrics.disk.usage);
-        
-        return `
-            <div class="host-card" data-host-id="${hostData.hostId}">
-                <div class="host-header">
-                    <div class="host-ip">${hostData.hostIp}</div>
-                    <div class="host-status ${statusClass}">${statusText}</div>
-                </div>
-                
-                <div class="metrics-grid">
-                    <div class="metric-item">
-                        <div class="metric-label">CPU使用率</div>
-                        <div class="metric-value">${metrics.cpu.usage.toFixed(1)}%</div>
-                        <div class="metric-bar">
-                            <div class="metric-progress ${cpuProgressClass}" 
-                                 style="width: ${metrics.cpu.usage}%"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="metric-item">
-                        <div class="metric-label">内存使用率</div>
-                        <div class="metric-value">${metrics.memory.usage.toFixed(1)}%</div>
-                        <div class="metric-bar">
-                            <div class="metric-progress ${memoryProgressClass}" 
-                                 style="width: ${metrics.memory.usage}%"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="metric-item">
-                        <div class="metric-label">磁盘使用率</div>
-                        <div class="metric-value">${metrics.disk.usage.toFixed(1)}%</div>
-                        <div class="metric-bar">
-                            <div class="metric-progress ${diskProgressClass}" 
-                                 style="width: ${metrics.disk.usage}%"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="metric-item">
-                        <div class="metric-label">网络流量</div>
-                        <div class="metric-value">${metrics.network.in.toFixed(1)}/s</div>
-                        <div class="metric-label">入: ${metrics.network.in.toFixed(1)}MB/s 出: ${metrics.network.out.toFixed(1)}MB/s</div>
-                    </div>
-                </div>
-                
-                <div class="chart-container">
-                    <canvas id="chart-${hostData.hostId}" width="400" height="200"></canvas>
-                </div>
-            </div>
-        `;
-    }
-    
-    getProgressClass(usage) {
-        if (usage < 50) return 'progress-low';
-        if (usage < 80) return 'progress-medium';
-        return 'progress-high';
-    }
-    
-    updateCharts(hostData) {
-        const canvasId = `chart-${hostData.hostId}`;
-        const canvas = document.getElementById(canvasId);
-        
-        if (!canvas) return;
-        
-        if (!this.charts.has(hostData.hostId)) {
-            this.initializeChart(hostData.hostId, canvas);
-        }
-    }
-    
-    initializeChart(hostId, canvas) {
-        const ctx = canvas.getContext('2d');
-        const chart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: Array.from({length: 10}, (_, i) => `${i * 5}秒前`).reverse(),
-                datasets: [
-                    {
-                        label: 'CPU使用率 (%)',
-                        data: Array(10).fill(0).map(() => Math.random() * 100),
-                        borderColor: '#6c5ce7',
-                        backgroundColor: 'rgba(108, 92, 231, 0.1)',
-                        tension: 0.4,
-                        fill: true
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        labels: { color: '#dfe6e9' }
-                    }
-                },
-                scales: {
-                    x: {
-                        grid: { color: 'rgba(255, 255, 255, 0.1)' },
-                        ticks: { color: '#a29bfe' }
-                    },
-                    y: {
-                        min: 0,
-                        max: 100,
-                        grid: { color: 'rgba(255, 255, 255, 0.1)' },
-                        ticks: { color: '#a29bfe' }
-                    }
-                }
-            }
-        });
-        this.charts.set(hostId, chart);
-    }
-    
-    updateLastUpdateTime() {
-        const now = new Date();
-        document.getElementById('lastUpdateTime').textContent = 
-            `最后更新: ${now.toLocaleTimeString()}`;
-    }
-    
-    startAutoRefresh() {
-        this.stopAutoRefresh(); // 清除现有定时器
-        
-        this.refreshInterval = setInterval(async () => {
-            await this.loadMonitoringData();
-        }, this.refreshRate);
-        
-        document.getElementById('refreshStatus').textContent = '🟢🟢🟢 实时刷新中';
-        document.getElementById('refreshStatus').style.color = '#2ecc71';
-    }
-    
-    stopAutoRefresh() {
-        if (this.refreshInterval) {
-            clearInterval(this.refreshInterval);
-            this.refreshInterval = null;
-        }
-        
-        document.getElementById('refreshStatus').textContent = '🔴🔴 刷新已暂停';
-        document.getElementById('refreshStatus').style.color = '#e74c3c';
-    }
-}
-
 // 页面加载完成后初始化
 document.addEventListener('DOMContentLoaded', () => {
-    window.hostManager = new HostManager();
-    window.dashboard = new MonitoringDashboard();
+    // 如果是监控大屏页面
+    if (document.getElementById('hostsContainer')) {
+        window.dashboard = new MonitoringDashboard();
+    }
     
-    // 添加手动刷新功能
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'r' && e.ctrlKey) {
-            e.preventDefault();
-            if (window.dashboard) {
-                window.dashboard.loadMonitoringData();
-            }
-        }
-    });
-    
-    console.log('服务器监控系统前端已初始化');
+    // 如果是主机管理页面
+    if (document.getElementById('addHostForm')) {
+        window.hostManager = new HostManager();
+    }
 });
+
+// 全局刷新函数
+function refreshDashboard() {
+    if (window.dashboard) {
+        window.dashboard.refreshData();
+    }
+}

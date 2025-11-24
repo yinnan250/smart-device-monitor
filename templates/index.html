@@ -26,6 +26,7 @@
             <div class="refresh-info">
                 <span id="lastUpdateTime">最后更新: --</span>
                 <span id="refreshStatus">🟢🟢🟢 实时刷新中</span>
+                <button onclick="refreshDashboard()" class="btn-primary" style="margin-top: 0.5rem;">手动刷新</button>
             </div>
         </div>
 
@@ -35,6 +36,108 @@
         </div>
     </div>
 
+    <!-- 添加一些必要的CSS样式 -->
+    <style>
+        .host-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.8rem;
+            color: #a29bfe;
+        }
+
+        .timestamp {
+            font-style: italic;
+        }
+
+        .data-source {
+            background: rgba(108, 92, 231, 0.3);
+            padding: 0.2rem 0.5rem;
+            border-radius: 3px;
+            font-size: 0.7rem;
+        }
+
+        .metric-info {
+            font-size: 0.8rem;
+            color: #dfe6e9;
+            margin-top: 0.3rem;
+        }
+
+        /* 确保加载状态样式正确 */
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            font-size: 1.2rem;
+            color: #a29bfe;
+            grid-column: 1 / -1;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: #a29bfe;
+            font-style: italic;
+            grid-column: 1 / -1;
+        }
+
+        .error {
+            text-align: center;
+            padding: 2rem;
+            color: #e74c3c;
+            background: rgba(231, 76, 60, 0.1);
+            border-radius: 10px;
+            grid-column: 1 / -1;
+        }
+
+        /* 响应式调整 */
+        @media (max-width: 768px) {
+            .hosts-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+
     <script src="{{ url_for('static', filename='app.js') }}"></script>
+    
+    <!-- 添加一些调试脚本 -->
+    <script>
+        // 页面加载完成后的调试信息
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('页面加载完成');
+            console.log('hostsContainer 元素:', document.getElementById('hostsContainer'));
+            
+            // 检查API是否可达
+            fetch('/api/monitoring/data')
+                .then(response => {
+                    console.log('API响应状态:', response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('API返回数据:', data);
+                })
+                .catch(error => {
+                    console.error('API测试失败:', error);
+                });
+        });
+
+        // 全局刷新函数
+        function refreshDashboard() {
+            if (window.dashboard) {
+                console.log('手动刷新数据');
+                window.dashboard.refreshData();
+            } else {
+                console.error('dashboard 未初始化');
+                // 如果dashboard未初始化，重新加载页面
+                window.location.reload();
+            }
+        }
+    </script>
 </body>
 </html>
