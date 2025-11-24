@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>服务器实时监控数据大屏系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <h1 class="nav-title">服务器实时监控数据大屏系统</h1>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}" class="nav-link active">监控大屏</a>
+                <a href="{{ url_for('host_management') }}" class="nav-link">主机管理</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 监控大屏内容 -->
+    <div class="dashboard-container">
+        <div class="dashboard-header">
+            <h2>服务器实时监控概览</h2>
+            <div class="refresh-info">
+                <span id="lastUpdateTime">最后更新: --</span>
+                <span id="refreshStatus">🟢🟢🟢 实时刷新中</span>
+            </div>
+        </div>
+
+        <!-- 主机监控卡片容器 -->
+        <div id="hostsContainer" class="hosts-grid">
+            <div class="loading">正在加载监控数据...</div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

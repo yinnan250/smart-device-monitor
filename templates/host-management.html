@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>主机管理 - 服务器监控系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <h1 class="nav-title">服务器实时监控数据大屏系统</h1>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}" class="nav-link">监控大屏</a>
+                <a href="{{ url_for('host_management') }}" class="nav-link active">主机管理</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 主机管理内容 -->
+    <div class="management-container">
+        <h2>主机管理</h2>
+        
+        <!-- 添加主机表单 -->
+        <div class="form-section">
+            <h3>添加新主机</h3>
+            <form id="addHostForm" class="host-form">
+                <div class="form-group">
+                    <label for="hostIp">主机IP地址 *</label>
+                    <input type="text" id="hostIp" name="hostIp" required 
+                           placeholder="例如：192.168.1.100">
+                </div>
+                
+                <div class="form-group">
+                    <label for="sshUser">SSH用户名 *</label>
+                    <input type="text" id="sshUser" name="sshUser" required 
+                           placeholder="例如：root">
+                </div>
+                
+                <div class="form-group">
+                    <label for="sshPassword">SSH密码 *</label>
+                    <input type="password" id="sshPassword" name="sshPassword" required 
+                           placeholder="请输入SSH密码">
+                </div>
+                
+                <div class="form-group">
+                    <label for="sshPort">SSH端口</label>
+                    <input type="number" id="sshPort" name="sshPort" value="22" 
+                           placeholder="默认22" min="1" max="65535">
+                </div>
+                
+                <button type="submit" class="btn-primary">添加主机</button>
+            </form>
+        </div>
+
+        <!-- 主机列表 -->
+        <div class="hosts-section">
+            <h3>已监控的主机列表</h3>
+            <div id="hostsList" class="hosts-list">
+                <div class="empty-state">暂无监控主机，请先添加主机。</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
