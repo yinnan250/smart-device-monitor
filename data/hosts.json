@@ -14,5 +14,13 @@
     "sshPassword": "123456",
     "sshPort": "22",
     "createdAt": "2025-11-24T14:44:37.798897"
+  },
+  {
+    "id": 1764041074243,
+    "hostIp": "192.168.255.129",
+    "sshUser": "root",
+    "sshPassword": "seig",
+    "sshPort": "22",
+    "createdAt": "2025-11-25T03:24:34.243687"
   }
 ]

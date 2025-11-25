@@ -6,15 +6,139 @@ import paramiko
 from datetime import datetime
 import re
 import subprocess
+import sqlite3
+from contextlib import contextmanager
 
 app = Flask(__name__)
 
 # 数据文件路径
 DATA_DIR = 'data'
 HOSTS_FILE = os.path.join(DATA_DIR, 'hosts.json')
+DB_FILE = os.path.join(DATA_DIR, 'monitor.db')
 
 # 确保数据目录存在
 os.makedirs(DATA_DIR, exist_ok=True)
+
+def init_database():
+    """初始化数据库"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    # 创建监控数据表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS monitoring_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            host_id INTEGER NOT NULL,
+            host_ip TEXT NOT NULL,
+            status TEXT NOT NULL,
+            cpu_usage REAL NOT NULL,
+            memory_usage REAL NOT NULL,
+            memory_total INTEGER NOT NULL,
+            memory_used INTEGER NOT NULL,
+            disk_usage REAL NOT NULL,
+            network_in INTEGER NOT NULL,
+            network_out INTEGER NOT NULL,
+            timestamp DATETIME NOT NULL,
+            real_data BOOLEAN NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # 创建索引以提高查询性能
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_host_id ON monitoring_data(host_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON monitoring_data(timestamp)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_host_timestamp ON monitoring_data(host_id, timestamp)')
+    
+    conn.commit()
+    conn.close()
+
+@contextmanager
+def get_db_connection():
+    """数据库连接上下文管理器"""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+def save_monitoring_data(monitoring_data):
+    """保存监控数据到数据库"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        for host_data in monitoring_data:
+            metrics = host_data['metrics']
+            cursor.execute('''
+                INSERT INTO monitoring_data 
+                (host_id, host_ip, status, cpu_usage, memory_usage, memory_total, memory_used, 
+                 disk_usage, network_in, network_out, timestamp, real_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                host_data['hostId'],
+                host_data['hostIp'],
+                host_data['status'],
+                metrics['cpu']['usage'],
+                metrics['memory']['usage'],
+                metrics['memory']['total'],
+                metrics['memory']['used'],
+                metrics['disk']['usage'],
+                metrics['network']['in'],
+                metrics['network']['out'],
+                host_data['timestamp'],
+                host_data['realData']
+            ))
+        
+        conn.commit()
+
+def get_historical_data(host_id=None, hours=24, limit=1000):
+    """获取历史监控数据"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        query = '''
+            SELECT * FROM monitoring_data 
+            WHERE timestamp >= datetime('now', ?)
+        '''
+        params = [f'-{hours} hours']
+        
+        if host_id:
+            query += ' AND host_id = ?'
+            params.append(host_id)
+        
+        query += ' ORDER BY timestamp DESC LIMIT ?'
+        params.append(limit)
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        
+        # 转换为字典列表
+        return [dict(row) for row in rows]
+
+def get_latest_data(host_id=None):
+    """获取最新的监控数据"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        if host_id:
+            cursor.execute('''
+                SELECT * FROM monitoring_data 
+                WHERE host_id = ? 
+                ORDER BY timestamp DESC 
+                LIMIT 1
+            ''', (host_id,))
+        else:
+            cursor.execute('''
+                SELECT md1.* FROM monitoring_data md1
+                INNER JOIN (
+                    SELECT host_id, MAX(timestamp) as max_timestamp
+                    FROM monitoring_data
+                    GROUP BY host_id
+                ) md2 ON md1.host_id = md2.host_id AND md1.timestamp = md2.max_timestamp
+            ''')
+        
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
 
 def load_hosts():
     """加载主机数据"""
@@ -50,22 +174,18 @@ def get_real_metrics(host):
         metrics = {}
         
         # 1. 获取CPU使用率
-        # 执行top命令获取CPU信息
         stdin, stdout, stderr = ssh.exec_command("top -bn1 | grep '%Cpu'")
         cpu_output = stdout.read().decode('utf-8')
         
-        # 解析CPU使用率 (用户态+系统态)
         cpu_match = re.search(r'%Cpu\(s\):\s+([\d.]+)\s+us,\s+([\d.]+)\s+sy', cpu_output)
         if cpu_match:
             cpu_usage = float(cpu_match.group(1)) + float(cpu_match.group(2))
             metrics['cpu_usage'] = round(cpu_usage, 1)
         else:
-            # 备用方法：使用/proc/stat计算CPU使用率
             stdin, stdout, stderr = ssh.exec_command("cat /proc/stat | grep '^cpu '")
             cpu_stat = stdout.read().decode('utf-8').strip().split()
             
             if len(cpu_stat) >= 8:
-                # 计算总CPU时间
                 total_time = sum(map(int, cpu_stat[1:8]))
                 idle_time = int(cpu_stat[4])
                 cpu_usage = 100.0 * (1 - idle_time / total_time) if total_time > 0 else 0
@@ -74,11 +194,9 @@ def get_real_metrics(host):
                 metrics['cpu_usage'] = 0
         
         # 2. 获取内存使用率
-        # 执行free命令获取内存信息
         stdin, stdout, stderr = ssh.exec_command("free | grep Mem")
         mem_output = stdout.read().decode('utf-8')
         
-        # 解析内存使用率
         mem_match = re.search(r'Mem:\s+(\d+)\s+(\d+)\s+(\d+)', mem_output)
         if mem_match:
             total_mem = int(mem_match.group(1))
@@ -96,7 +214,6 @@ def get_real_metrics(host):
         stdin, stdout, stderr = ssh.exec_command("df / | tail -1")
         disk_output = stdout.read().decode('utf-8')
         
-        # 解析根分区磁盘使用率
         disk_match = re.search(r'(\d+)%\s+/', disk_output)
         if disk_match:
             metrics['disk_usage'] = int(disk_match.group(1))
@@ -109,8 +226,8 @@ def get_real_metrics(host):
         
         if net_output:
             net_data = net_output.split()
-            metrics['net_in'] = int(net_data[1]) // 1024 // 1024  # 转换为MB
-            metrics['net_out'] = int(net_data[9]) // 1024 // 1024  # 转换为MB
+            metrics['net_in'] = int(net_data[1]) // 1024 // 1024
+            metrics['net_out'] = int(net_data[9]) // 1024 // 1024
         else:
             metrics['net_in'] = 0
             metrics['net_out'] = 0
@@ -127,12 +244,11 @@ def get_real_metrics(host):
         return None
 
 def generate_real_monitoring_data():
-    """生成真实监控数据"""
+    """生成真实监控数据并保存到数据库"""
     hosts = load_hosts()
     monitoring_data = []
     
     for host in hosts:
-        # 检查主机是否在线（ping测试）
         ping_status = subprocess.call(
             ['ping', '-c', '1', '-W', '2', host['hostIp']], 
             stdout=subprocess.DEVNULL, 
@@ -140,21 +256,19 @@ def generate_real_monitoring_data():
         ) == 0
         
         if ping_status:
-            # 尝试通过SSH获取真实数据
             real_metrics = get_real_metrics(host)
             
             if real_metrics:
-                # 使用真实数据
-                monitoring_data.append({
+                host_data = {
                     'hostId': host['id'],
                     'hostIp': host['hostIp'],
                     'status': 'online',
                     'timestamp': datetime.now().isoformat(),
-                    'realData': True,  # 标记为真实数据
+                    'realData': True,
                     'metrics': {
                         'cpu': {
                             'usage': real_metrics['cpu_usage'],
-                            'temperature': 40  # 默认值，需要额外命令获取
+                            'temperature': 40
                         },
                         'memory': {
                             'usage': real_metrics['mem_usage'],
@@ -163,7 +277,7 @@ def generate_real_monitoring_data():
                         },
                         'disk': {
                             'usage': real_metrics['disk_usage'],
-                            'total': 100,  # 默认值
+                            'total': 100,
                             'used': 0
                         },
                         'network': {
@@ -171,13 +285,15 @@ def generate_real_monitoring_data():
                             'out': real_metrics['net_out']
                         }
                     }
-                })
+                }
+                monitoring_data.append(host_data)
             else:
-                # SSH连接失败，使用模拟数据但标记为离线
                 monitoring_data.append(generate_mock_data(host, False))
         else:
-            # 主机离线，使用模拟数据
             monitoring_data.append(generate_mock_data(host, False))
+    
+    # 保存监控数据到数据库
+    save_monitoring_data(monitoring_data)
     
     return monitoring_data
 
@@ -188,7 +304,7 @@ def generate_mock_data(host, online=True):
         'hostIp': host['hostIp'],
         'status': 'online' if online else 'offline',
         'timestamp': datetime.now().isoformat(),
-        'realData': False,  # 标记为模拟数据
+        'realData': False,
         'metrics': {
             'cpu': {
                 'usage': min(100, max(5, abs(hash(f"{host['id']}{int(time.time()/10)}")) % 100)),
@@ -220,6 +336,10 @@ def index():
 def host_management():
     return render_template('host-management.html')
 
+@app.route('/data-history')
+def data_history():
+    return render_template('data-history.html')
+
 # API 路由
 @app.route('/api/hosts', methods=['GET'])
 def get_hosts():
@@ -231,23 +351,19 @@ def add_host():
     """添加新主机"""
     data = request.json
     
-    # 验证必要字段
     required_fields = ['hostIp', 'sshUser', 'sshPassword']
     for field in required_fields:
         if not data.get(field):
             return jsonify({'error': f'缺少必要字段: {field}'}), 400
     
-    # IP地址验证
     if not is_valid_ip(data['hostIp']):
         return jsonify({'error': '无效的IP地址格式'}), 400
     
     hosts = load_hosts()
     
-    # 检查IP是否已存在
     if any(host['hostIp'] == data['hostIp'] for host in hosts):
         return jsonify({'error': '该IP地址的主机已存在'}), 400
     
-    # 测试SSH连接
     test_result = test_ssh_connection(
         data['hostIp'], 
         data['sshUser'], 
@@ -258,9 +374,8 @@ def add_host():
     if not test_result['success']:
         return jsonify({'error': f'SSH连接测试失败: {test_result["message"]}'}), 400
     
-    # 添加新主机
     new_host = {
-        'id': int(time.time() * 1000),  # 使用时间戳作为ID
+        'id': int(time.time() * 1000),
         'hostIp': data['hostIp'],
         'sshUser': data['sshUser'],
         'sshPassword': data['sshPassword'],
@@ -290,6 +405,32 @@ def get_monitoring_data():
     """获取监控数据（优先使用真实数据）"""
     return jsonify(generate_real_monitoring_data())
 
+@app.route('/api/history/data', methods=['GET'])
+def get_history_data():
+    """获取历史监控数据"""
+    host_id = request.args.get('host_id', type=int)
+    hours = request.args.get('hours', 24, type=int)
+    limit = request.args.get('limit', 1000, type=int)
+    
+    try:
+        data = get_historical_data(host_id, hours, limit)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': f'获取历史数据失败: {str(e)}'}), 500
+
+@app.route('/api/history/hosts', methods=['GET'])
+def get_history_hosts():
+    """获取有历史数据的主机列表"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT DISTINCT host_id, host_ip 
+            FROM monitoring_data 
+            ORDER BY host_ip
+        ''')
+        hosts = [dict(row) for row in cursor.fetchall()]
+        return jsonify(hosts)
+
 @app.route('/api/test-ssh', methods=['POST'])
 def test_ssh():
     """测试SSH连接"""
@@ -309,7 +450,6 @@ def test_ssh_connection(host_ip, username, password, port='22'):
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.connect(host_ip, port=int(port), username=username, password=password, timeout=10)
         
-        # 测试执行简单命令
         stdin, stdout, stderr = ssh.exec_command('echo "SSH连接测试成功"')
         output = stdout.read().decode('utf-8').strip()
         
@@ -328,4 +468,6 @@ def is_valid_ip(ip):
     return all(0 <= int(segment) <= 255 for segment in ip.split('.'))
 
 if __name__ == '__main__':
+    # 初始化数据库
+    init_database()
     app.run(host='0.0.0.0', port=5000, debug=False)

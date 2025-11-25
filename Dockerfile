@@ -20,5 +20,5 @@ RUN mkdir -p /app/data
 
 EXPOSE 5000
 
-# 使用gunicorn运行应用
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "app:app"]
+# 初始化数据库并启动应用
+CMD ["sh", "-c", "python -c 'from app import init_database; init_database()' && gunicorn -w 4 -b 0.0.0.0:5000 app:app"]

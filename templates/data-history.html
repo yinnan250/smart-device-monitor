@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>历史数据 - 服务器监控系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <h1 class="nav-title">服务器实时监控数据大屏系统</h1>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}" class="nav-link">监控大屏</a>
+                <a href="{{ url_for('host_management') }}" class="nav-link">主机管理</a>
+                <a href="{{ url_for('data_history') }}" class="nav-link active">历史数据</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 历史数据内容 -->
+    <div class="management-container">
+        <h2>历史监控数据查询</h2>
+        
+        <!-- 查询条件 -->
+        <div class="form-section">
+            <h3>查询条件</h3>
+            <form id="queryForm" class="host-form">
+                <div class="form-group">
+                    <label for="hostSelect">选择主机</label>
+                    <select id="hostSelect" name="host_id">
+                        <option value="">所有主机</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="hours">时间范围（小时）</label>
+                    <input type="number" id="hours" name="hours" value="24" min="1" max="720">
+                </div>
+                
+                <div class="form-group">
+                    <label for="limit">显示条数</label>
+                    <input type="number" id="limit" name="limit" value="100" min="1" max="5000">
+                </div>
+                
+                <div class="form-actions">
+                    <button type="submit" class="btn-primary">查询数据</button>
+                    <button type="button" id="exportBtn" class="btn-secondary">导出数据</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- 数据表格 -->
+        <div class="hosts-section">
+            <h3>监控数据记录</h3>
+            <div id="dataTableContainer">
+                <table id="dataTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>主机IP</th>
+                            <th>状态</th>
+                            <th>CPU使用率</th>
+                            <th>内存使用率</th>
+                            <th>磁盘使用率</th>
+                            <th>网络流入</th>
+                            <th>网络流出</th>
+                            <th>数据来源</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dataTableBody">
+                        <tr>
+                            <td colspan="9" class="empty-state">请设置查询条件并点击查询</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div id="pagination" class="pagination"></div>
+        </div>
+    </div>
+
+    <style>
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .data-table th,
+        .data-table td {
+            padding: 0.8rem;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .data-table th {
+            background: rgba(108, 92, 231, 0.3);
+            color: #a29bfe;
+            font-weight: bold;
+        }
+        
+        .data-table tr:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .status-online {
+            color: #2ecc71;
+        }
+        
+        .status-offline {
+            color: #e74c3c;
+        }
+        
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        
+        .page-btn {
+            padding: 0.5rem 1rem;
+            background: rgba(108, 92, 231, 0.3);
+            border: none;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+        }
+        
+        .page-btn.active {
+            background: #6c5ce7;
+        }
+        
+        .page-btn:hover:not(.active) {
+            background: rgba(108, 92, 231, 0.5);
+        }
+    </style>
+
+    <script>
+        class HistoryDataManager {
+            constructor() {
+                this.currentPage = 1;
+                this.pageSize = 50;
+                this.init();
+            }
+            
+            async init() {
+                await this.loadHosts();
+                this.setupEventListeners();
+            }
+            
+            async loadHosts() {
+                try {
+                    const response = await fetch('/api/history/hosts');
+                    const hosts = await response.json();
+                    
+                    const hostSelect = document.getElementById('hostSelect');
+                    hosts.forEach(host => {
+                        const option = document.createElement('option');
+                        option.value = host.host_id;
+                        option.textContent = `${host.host_ip} (ID: ${host.host_id})`;
+                        hostSelect.appendChild(option);
+                    });
+                } catch (error) {
+                    console.error('加载主机列表失败:', error);
+                }
+            }
+            
+            setupEventListeners() {
+                document.getElementById('queryForm').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.queryData();
+                });
+                
+                document.getElementById('exportBtn').addEventListener('click', () => {
+                    this.exportData();
+                });
+            }
+            
+            async queryData(page = 1) {
+                this.currentPage = page;
+                
+                const formData = new FormData(document.getElementById('queryForm'));
+                const params = new URLSearchParams();
+                
+                for (const [key, value] of formData.entries()) {
+                    if (value) params.append(key, value);
+                }
+                
+                try {
+                    const response = await fetch(`/api/history/data?${params}`);
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        this.displayData(data);
+                    } else {
+                        throw new Error(data.error || '查询失败');
+                    }
+                } catch (error) {
+                    this.showError('查询数据失败: ' + error.message);
+                }
+            }
+            
+            displayData(data) {
+                const tbody = document.getElementById('dataTableBody');
+                
+                if (!data || data.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="9" class="empty-state">没有找到匹配的数据</td>
+                        </tr>
+                    `;
+                    document.getElementById('pagination').innerHTML = '';
+                    return;
+                }
+                
+                tbody.innerHTML = data.map(item => `
+                    <tr>
+                        <td>${new Date(item.timestamp).toLocaleString()}</td>
+                        <td>${item.host_ip}</td>
+                        <td class="status-${item.status}">${item.status === 'online' ? '在线' : '离线'}</td>
+                        <td>${item.cpu_usage}%</td>
+                        <td>${item.memory_usage}%</td>
+                        <td>${item.disk_usage}%</td>
+                        <td>${item.network_in} MB/s</td>
+                        <td>${item.network_out} MB/s</td>
+                        <td>${item.real_data ? '真实数据' : '模拟数据'}</td>
+                    </tr>
+                `).join('');
+                
+                this.updatePagination(data.length);
+            }
+            
+            updatePagination(totalItems) {
+                const totalPages = Math.ceil(totalItems / this.pageSize);
+                const pagination = document.getElementById('pagination');
+                
+                if (totalPages <= 1) {
+                    pagination.innerHTML = '';
+                    return;
+                }
+                
+                let paginationHTML = '';
+                
+                // 上一页按钮
+                if (this.currentPage > 1) {
+                    paginationHTML += `<button class="page-btn" onclick="historyDataManager.queryData(${this.currentPage - 1})">上一页</button>`;
+                }
+                
+                // 页码按钮
+                for (let i = 1; i <= totalPages; i++) {
+                    if (i === this.currentPage) {
+                        paginationHTML += `<button class="page-btn active">${i}</button>`;
+                    } else {
+                        paginationHTML += `<button class="page-btn" onclick="historyDataManager.queryData(${i})">${i}</button>`;
+                    }
+                }
+                
+                // 下一页按钮
+                if (this.currentPage < totalPages) {
+                    paginationHTML += `<button class="page-btn" onclick="historyDataManager.queryData(${this.currentPage + 1})">下一页</button>`;
+                }
+                
+                pagination.innerHTML = paginationHTML;
+            }
+            
+            async exportData() {
+                const formData = new FormData(document.getElementById('queryForm'));
+                const params = new URLSearchParams();
+                
+                for (const [key, value] of formData.entries()) {
+                    if (value) params.append(key, value);
+                }
+                
+                try {
+                    const response = await fetch(`/api/history/data?${params}`);
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.error || '导出失败');
+                    }
+                    
+                    // 转换为CSV格式
+                    const csv = this.convertToCSV(data);
+                    this.downloadCSV(csv, 'monitoring_data.csv');
+                    
+                } catch (error) {
+                    this.showError('导出数据失败: ' + error.message);
+                }
+            }
+            
+            convertToCSV(data) {
+                if (!data.length) return '';
+                
+                const headers = Object.keys(data[0]).join(',');
+                const rows = data.map(item => 
+                    Object.values(item).map(value => 
+                        typeof value === 'string' && value.includes(',') ? `"${value}"` : value
+                    ).join(',')
+                );
+                
+                return [headers, ...rows].join('\n');
+            }
+            
+            downloadCSV(csv, filename) {
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+                const url = URL.createObjectURL(blob);
+                
+                link.setAttribute('href', url);
+                link.setAttribute('download', filename);
+                link.style.visibility = 'hidden';
+                
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+            
+            showError(message) {
+                alert(message);
+            }
+        }
+        
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            window.historyDataManager = new HistoryDataManager();
+        });
+    </script>
+</body>
+</html>
